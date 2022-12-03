@@ -3,7 +3,7 @@ from scipy.stats import sem
 from numpy import mean 
 from numpy import std
 from sklearn.datasets import make_classification
-from sklearn.model_selection import RepeatedKFold
+from sklearn.model_selection import RepeatedKFold, train_test_split
 from sklearn.model_selection import cross_val_score
 from sklearn.linear_model import LogisticRegression
 from matplotlib import pyplot
@@ -73,7 +73,7 @@ def tokenize(tweet: str, method: str = "tweet") -> List[str]:
 
     # remove emojis
     tokens_emojis_removed = [
-        t for t in tokens_punctuation_removed if t not in emoji.UNICODE_EMOJI]
+        t for t in tokens_punctuation_removed if not emoji.is_emoji(t)]
 
     # also perform stemming
     return [PorterStemmer().stem(t) for t in tokens_emojis_removed]
@@ -122,91 +122,74 @@ def tokenize(tweet: str, method: str = "tweet") -> List[str]:
 #               "Mean Validation F1 Score": results['test_f1'].mean()
 #               }
 
-# def train_clf(train_tweets: List[str], train_labels: List[int], 
-#               test_tweets: List[str], test_labels: List[int],  train_i, test_i,
-#               classifier_filename: str = None,
-#               vectorizer_filename: str = None, 
-#               error_log_filename: str = None) -> None:
+def train_clf(train_tweets: List[str], train_labels: List[int], 
+              test_tweets: List[str], test_labels: List[int], 
+              classifier_filename: str = None,
+              vectorizer_filename: str = None, 
+              error_log_filename: str = None) -> None:
+    """
+    Trains a classifier on `train_tweets` and 
+      saves the vectorizer and model to disk if respective filenames are passed in.
+    Prints out the classification report/scores of the trained classifier on `test_tweets`.
+    Also plots the confusion matrix and, if a filename is provided, misprediction information 
+      is written to another file.
+    """
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.metrics import classification_report, plot_confusion_matrix
+    import numpy as np
+    from joblib import dump
+    from matplotlib import pyplot as plt
     
-#     """
-#     Trains a classifier on `train_tweets` and 
-#       saves the vectorizer and model to disk if respective filenames are passed in.
-#     Prints out the classification report/scores of the trained classifier on `test_tweets`.
-#     Also plots the confusion matrix and, if a filename is provided, misprediction information 
-#       is written to another file.
-#     """
-#     from sklearn.feature_extraction.text import TfidfVectorizer
-#     from sklearn.ensemble import RandomForestClassifier
-#     from sklearn.metrics import classification_report, plot_confusion_matrix
-#     from sklearn.model_selection import KFold
-#     import numpy as np
-#     from joblib import dump
-#     from matplotlib import pyplot as plt
+    vectorizer = TfidfVectorizer(
+        tokenizer=tokenize,
+        preprocessor=preprocess_tweet,
+        ngram_range=(1, 3),
+        min_df=5,  # only consider terms that occur in at least 5 tweets
+        max_df=0.75  # only consider terms that occur in less than 75% of all tweets
+    )
 
-#     global max_accuracy
-#     global max_train_index
-#     global max_test_index
+    # train
+    X_vectorized = vectorizer.fit_transform(train_tweets)
+    clf = RandomForestClassifier(n_estimators=500, min_samples_split=2,
+                                 min_samples_leaf=1, max_features='sqrt', 
+                                 max_depth=None, bootstrap=False, 
+                                 class_weight='balanced')
+    clf.fit(X_vectorized, train_labels)
 
-#     vectorizer = TfidfVectorizer(
-#         tokenizer=tokenize,
-#         preprocessor=preprocess_tweet,
-#         ngram_range=(1, 3),
-#         min_df=5,  # only consider terms that occur in at least 5 tweets
-#         max_df=0.75  # only consider terms that occur in less than 75% of all tweets
-#     )
-
-#     # train
-
-#     X_vectorized = vectorizer.fit_transform(train_tweets) 
-#     # print(X_vectorized)
-#     clf = RandomForestClassifier(n_estimators=400, min_samples_split=2,
-#                                  min_samples_leaf=1, max_features='sqrt', 
-#                                  max_depth=None, bootstrap=False, 
-#                                  class_weight='balanced')
-#     # clf_result = cross_validation(clf, X, y, 5)
-#     clf.fit(X_vectorized, train_labels)
-
-#     print("fits model")
-#     # test and print classification report
-#     X_test_vectorized = vectorizer.transform(test_tweets)
-#     y_pred = clf.predict(X_test_vectorized)
-#     clf_report = classification_report(test_labels, y_pred, output_dict = True)
-#     accuracy_dic = clf_report['accuracy']
-#     if accuracy_dic > max_accuracy:
-#         max_accuracy = accuracy_dic
-#         max_train_index = train_i
-#         max_test_index = test_i
-
-#     print("CLF Report")
-#     print(clf_report)
+    # test and print classification report
+    X_test_vectorized = vectorizer.transform(test_tweets)
+    y_pred = clf.predict(X_test_vectorized)
+    clf_report = classification_report(test_labels, y_pred)
+    print(clf_report)
     
-    # if error_log_filename:
-    #     with open(error_log_filename, 'w') as f:
-    #         for i in range(len(y_pred)):
-    #             if y_pred[i] != test_labels[i]:
-    #                 f.write("***\n")
-    #                 f.write(f"EXPECTED: {test_labels[i]}, PREDICTED: {y_pred[i]}\n")
-    #                 f.write(f"TWEET: {test_tweets[i]}\n\n")
-    #     print(f"Wrote incorrectly predicted tweets to {error_log_filename}.")
+    if error_log_filename:
+        with open(error_log_filename, 'w') as f:
+            for i in range(len(y_pred)):
+                if y_pred[i] != test_labels[i]:
+                    f.write("***\n")
+                    f.write(f"EXPECTED: {test_labels[i]}, PREDICTED: {y_pred[i]}\n")
+                    f.write(f"TWEET: {test_tweets[i]}\n\n")
+        print(f"Wrote incorrectly predicted tweets to {error_log_filename}.")
 
     
     # confusion matrix
-    # plot_confusion_matrix(clf, X_test_vectorized, test_labels)
-    # plt.show()
+    plot_confusion_matrix(clf, X_test_vectorized, test_labels)
+    plt.show()
     
     
     # persist classifier and vectorizer
-    # MODEL_ROOT_DIR = os.path.join('..', 'models')
+    MODEL_ROOT_DIR = os.path.join('..', 'models')
 
-    # if classifier_filename:
-    #     full_clf_filename = os.path.join(MODEL_ROOT_DIR, f"{classifier_filename}.joblib")
-    #     print(f"Saving classifier to {full_clf_filename}")
-    #     dump(clf, full_clf_filename)
+    if classifier_filename:
+        full_clf_filename = os.path.join(MODEL_ROOT_DIR, f"{classifier_filename}.joblib")
+        print(f"Saving classifier to {full_clf_filename}")
+        dump(clf, full_clf_filename)
         
-    # if vectorizer_filename:
-    #     full_vect_filename = os.path.join(MODEL_ROOT_DIR, f"{vectorizer_filename}.joblib")
-    #     print(f"Saving vectorizer to {full_vect_filename}")
-    #     dump(vectorizer, full_vect_filename)
+    if vectorizer_filename:
+        full_vect_filename = os.path.join(MODEL_ROOT_DIR, f"{vectorizer_filename}.joblib")
+        print(f"Saving vectorizer to {full_vect_filename}")
+        dump(vectorizer, full_vect_filename)
 
 
 def evaluate_model(X, y, repeats):
@@ -220,12 +203,10 @@ def evaluate_model(X, y, repeats):
 if __name__ == '__main__':
     import os
     import pandas as pd
-
-
  
     # read tweets   
     filename = os.path.join('..', 'data', 'out',
-                            'test_clean(RoundUp).csv') #CHANGED THE FILE NAME
+                            'test_clean(01).csv') #CHANGED THE FILE NAME
     tweets_df = pd.read_csv(
         filename, usecols=['Content', 'Average Rating', 'User'])
     
@@ -235,13 +216,10 @@ if __name__ == '__main__':
 
     num_tweets = len(y_total)
     split_idx = int(num_tweets * 0.8) 
+    X, X_test_final, y, y_test_final = train_test_split(
+        X_total, y_total, test_size=0.3, shuffle = True, stratify=y_total)
     print("Total number of tweets:", num_tweets)
     print("Split index:", split_idx)
-
-    X = X_total[:split_idx]
-    y = y_total[:split_idx]
-    X_test_final = X_total[split_idx:]
-    y_test_final = y_total[split_idx:]
 
     true_best_model = None 
     max_accuracy = -1
@@ -257,6 +235,8 @@ if __name__ == '__main__':
         min_df=5,  # only consider terms that occur in at least 5 tweets
         max_df=0.75  # only consider terms that occur in less than 75% of all tweets
     )
+    
+
     best_params = dict()
     for train_ix, test_ix in kfRepeat.split(X_total):
         # split data
@@ -332,33 +312,8 @@ if __name__ == '__main__':
         print("best params")
         print(best_params)
 
+    train_clf(X_train, y_train, X_test, y_test)
 
-    #{'min_samples_leaf': 1, 'n_estimators': 300, 'max_features' = 6}                        
-    
-    # STILL TO DO:
-    # Try higher K's for both the repeated kfold and kfold. I couldn't do higher k because
-    # it took forever to run and takes up SO MUCH CPU
-
-
-    # kf = KFold(n_splits = 2)
-    # for train, test in kf.split(X): 
-    #     beginning_train = train[0]
-    #     end_train = train[len(train)-1]
-    #     beginning_test = test[0]
-    #     end_test = test[len(test)-1]
-    #     X_train, X_test, y_train, y_test = X[beginning_train:end_train+1], X[beginning_test:end_test+1], y[beginning_train:end_train+1], y[beginning_test:end_test+1]
-    #     print("Train index: " + str(train) + "\n Test index: " + str(test))
-    #     train_clf(X_train, y_train, X_test, y_test, train, test)
-
-    # print("max train index" + str(max_train_index))
-    # print("max test index" + str (max_test_index))
-    # beginning_train = max_train_index[0]
-    # end_train = max_train_index[len(max_train_index)-1]
-    # beginning_test = max_test_index[0]
-    # end_test = max_test_index[len(max_test_index)-1]
-    # X_train, X_test, y_train, y_test = X[beginning_train:end_train+1], X[beginning_test:end_test+1], y[beginning_train:end_train+1], y[beginning_test:end_test+1]
-    # train_clf(X_train, y_train, X_test, y_test, [], [])
-    # print("ends")
 
     
 
